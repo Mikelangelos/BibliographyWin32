@@ -1,0 +1,20 @@
+{{Practical Algebra: A Self-Teaching Guide}
+{Stephen L. Slavin | Peter H. Selby}
+{777730121}
+{355}
+{5:10,15:20,25:30}
+{66,88,99}}
+
+{{Accelerated C++: Practical Programming by Example}
+{Andrew Koenig | Barbara E. Moo}
+{444430121}
+{666}
+{5:11,15:21,25:31}}
+{13,73,93}}
+
+{{Programming Windows}
+{Charles Petzold}
+{333330121}
+{777}
+{5:12,15:22,25:32}}
+{24,54,84}}
