@@ -4,6 +4,7 @@
 #include <ctype.h>
 #include <Commctrl.h>
 #include "resource.h"
+#include <Shlobj.h>
 
 //---------------------------
 
@@ -67,6 +68,70 @@ struct Book {
 };
 
 //---------------------------
+//TODO: I should optimize this function.
+//I can cache the path or create a struct to have all that info..??
+void save_to_file(Book **book_list, s32 book_count)
+{
+   //......
+   wchar_t path[MAX_PATH] = L"\0";
+   wchar_t *documents_path;
+
+   SHGetKnownFolderPath(FOLDERID_Documents, 0, NULL, &documents_path);
+   wcscat_s(path, MAX_PATH, documents_path);			//documents path
+   wcscat_s(path, MAX_PATH, L"\\Bilbiography");			//folder
+   CreateDirectoryW(path, NULL);
+
+   wcscat_s(path, MAX_PATH, L"\\bibliography_list.txt");	//file
+   //......\
+
+   HANDLE wf = CreateFileW(path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+   CoTaskMemFree(documents_path); //has to free the pointer allocated&given to us by the system
+   
+   char buffer[1024];
+   char *wc;
+   u32 bytes_written;
+   Book *book;
+   u32 err = GetLastError();
+
+   for (u32 i = 0; i < book_count; ++i) {
+      wc = buffer;
+      bytes_written = 0;
+      book = book_list[i];
+
+      bytes_written += sprintf_s(wc, sizeof(buffer)-bytes_written, "{{%s}\r\n", book->name);
+      bytes_written += sprintf_s(wc+bytes_written, sizeof(buffer)-bytes_written, "{%s}\r\n", book->author);
+      bytes_written += sprintf_s(wc+bytes_written, sizeof(buffer)-bytes_written, "{%d}\r\n", book->ISBN);
+      bytes_written += sprintf_s(wc+bytes_written, sizeof(buffer)-bytes_written, "{%d}\r\n", book->page_total);
+
+      bytes_written += sprintf_s(wc+bytes_written, sizeof(buffer)-bytes_written, "{");
+      if (book->pageset_count) {
+	 for (u32 i = 0; i < book->pageset_count; ++i) {
+	    if (i+1 == book->pageset_count )
+	       bytes_written += sprintf_s(wc+bytes_written, sizeof(buffer)-bytes_written, "%d:%d}\r\n", LOWORD(book->pagesets[i]),HIWORD(book->pagesets[i]));
+	    else
+	       bytes_written += sprintf_s(wc+bytes_written, sizeof(buffer)-bytes_written, "%d:%d,", LOWORD(book->pagesets[i]),HIWORD(book->pagesets[i]));
+	 }
+      } else {	 
+	 bytes_written += sprintf_s(wc+bytes_written, sizeof(buffer)-bytes_written, "}\r\n");
+      }
+
+      bytes_written += sprintf_s(wc+bytes_written, sizeof(buffer)-bytes_written, "{");
+      if (book->page_count) {
+	 for (u32 i = 0; i < book->page_count; ++i) {
+	    if (i+1 == book->page_count )
+	       bytes_written += sprintf_s(wc+bytes_written, sizeof(buffer)-bytes_written, "%d}}\r\n\r\n", book->pages[i]);
+	    else
+	       bytes_written += sprintf_s(wc+bytes_written, sizeof(buffer)-bytes_written, "%d,", book->pages[i]);
+	 }
+      } else {
+	       bytes_written += sprintf_s(wc+bytes_written, sizeof(buffer)-bytes_written, "}\r\n\r\n");
+      }
+      
+      WriteFile(wf, buffer, bytes_written, NULL, NULL);
+   }
+   CloseHandle(wf);
+}
+
 inline void swap_u16_in_buffer(u16 *buf, u32 a, u32 b)
 {
    u32 tmp = buf[a];
@@ -540,8 +605,20 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	 ListView_InsertColumn(book_listview, 2, &column);
 
 	 //file io
-	 HANDLE read_file = CreateFile("bibliography_list.txt",
-				       GENERIC_READ, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+	 //......
+	 wchar_t path[MAX_PATH] = L"\0";
+	 wchar_t *documents_path;
+
+	 SHGetKnownFolderPath(FOLDERID_Documents, 0, NULL, &documents_path);
+	 wcscat_s(path, MAX_PATH, documents_path);			//documents path
+	 wcscat_s(path, MAX_PATH, L"\\Bilbiography");			//folder
+	 CreateDirectoryW(path, NULL);
+
+	 wcscat_s(path, MAX_PATH, L"\\bibliography_list.txt");	//file
+	 //......\
+
+	 HANDLE read_file = CreateFileW(path, GENERIC_READ, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+	 
 	 if(read_file != INVALID_HANDLE_VALUE) {
 	    book_count = (u8)load_books_from_file(read_file, book_list);
 	    CloseHandle(read_file);
@@ -617,6 +694,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	 get_pages_read(book, page_buffer, 512);
 	 snprintf(text, 2046, "%s\n%s\n%d\n%s\n", book->name, book->author, book->page_total, page_buffer);
 	 SetWindowText(book_details_text, text);
+	 save_to_file(book_list, book_count);
       }break;
 
       case WM_SYSCOLORCHANGE :
