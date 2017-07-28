@@ -48,17 +48,19 @@ _debug_OutputStringf(char *format, ...) //NOTE: This is inefficient for strings 
 #endif
 //----------------------------------------------------------------------------------
 
-#define PM_UPDATEENTRY (WM_USER+10)
+#define EL_OPERATION (WM_USER+10)
 
 //---------------------------
 global_variable WNDPROC DefaultGroupBoxProc;
 //---------------------------
+#define MAX_BOOK_COUNT 256
+#define MAX_BOOK_NAME 64
+#define MAX_BOOK_AUTHOR 64
+//---------------------------
 
 struct Book {
    char name[64];
-   char author[64];
-// char desc[256];
-   u16 id;
+   char author[64];;
    s16 page_total;
    u16 pageset_count;
    u16 page_count;	
@@ -507,6 +509,32 @@ u32 load_books_from_file(HANDLE file, Book **book_list)
    return (book_entry_count);
 }
 #endif
+BOOL CALLBACK NewBookProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+   switch(msg) {
+      case WM_COMMAND:
+	 switch(LOWORD(wParam)) {
+		 case IDDB_OK:
+		 {
+			 //NOTE: Assuming that it has valid info
+			 char tmp[8];
+			 Book *new_book = (Book *)HeapAlloc(GetProcessHeap(), NULL, sizeof(Book));
+			 GetDlgItemText(hwnd, IDDC_NAME, new_book->name, MAX_BOOK_NAME);
+			 GetDlgItemText(hwnd, IDDC_AUTHOR, new_book->author, MAX_BOOK_AUTHOR);
+			 GetDlgItemText(hwnd, IDDC_TOTALPAGES, tmp, 8);
+			 new_book->page_total = strtol(tmp, NULL, 10);
+			 SendMessage(GetParent(hwnd), EL_OPERATION, 1, (LPARAM)new_book);
+			 EndDialog(hwnd, 0);
+		 }break;
+	    case IDDB_CANCEL:
+	       EndDialog(hwnd, 0);
+	       break;
+	 }
+   }
+
+   return false;
+}
+
 LRESULT CALLBACK DetailsBoxProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
@@ -514,9 +542,9 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
    LRESULT result = 0;
 
    
-   local_persist HWND book_listview, book_groupbox, book_details_text, update_book_btn;
+   local_persist HWND book_listview, book_groupbox, book_details_text, update_book_btn, delete_book_btn;
    local_persist s32 xChar, yChar, client_size_x, client_size_y;
-   local_persist Book *book_list[256];
+   local_persist Book *book_list[MAX_BOOK_COUNT];
    local_persist u8 book_count;
    
    switch(msg) {
@@ -547,7 +575,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 				      WS_VISIBLE|WS_CHILD|BS_GROUPBOX,
 				      xChar, 21*yChar/2,
 				      client_size_x - 4*xChar, client_size_y-29*yChar/2,
-				      hwnd, (HMENU)IDG_DETAILS,
+				      hwnd, NULL,
 				      ((CREATESTRUCT *)lParam)->hInstance, NULL);
 
 	 DefaultGroupBoxProc = (WNDPROC)SetWindowLong(book_groupbox,GWL_WNDPROC, (LONG)DetailsBoxProc);
@@ -568,9 +596,16 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	 
 	 update_book_btn =  CreateWindow("button","Update..",
 					 WS_VISIBLE|WS_CHILD|BS_PUSHBUTTON|BS_FLAT|WS_TABSTOP|WS_DISABLED,
+					 client_size_x - 13*xChar, client_size_y-48*yChar/2,
+					 8*xChar, 2*yChar,
+					 book_groupbox, (HMENU)IDD_UPDATE,
+					 ((CREATESTRUCT *)lParam)->hInstance, NULL);
+
+	 	 delete_book_btn =  CreateWindow("button","Delete",
+					 WS_VISIBLE|WS_CHILD|BS_PUSHBUTTON|BS_FLAT|WS_TABSTOP|WS_DISABLED,
 					 client_size_x - 13*xChar, client_size_y-34*yChar/2,
 					 8*xChar, 2*yChar,
-					 book_groupbox, (HMENU)IDB_UPDATE,
+					 book_groupbox, (HMENU)IDB_DELETE,
 					 ((CREATESTRUCT *)lParam)->hInstance, NULL);
 
 	 CreateWindow("static", "",
@@ -653,7 +688,9 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
       case WM_COMMAND: {
 	 switch(LOWORD(wParam)) {
-	    
+	    case ID_FILE_NEW_BOOK:
+	       DialogBox(NULL, MAKEINTRESOURCE(IDD_NEWBOOK), hwnd, NewBookProc);
+	       break;
 	 }
 	    
       }break;
@@ -669,9 +706,11 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		  snprintf(text, 2046, "%s\n%s\n%d\n%s\n", book->name, book->author, book->page_total, page_buffer);
 		  SetWindowText(book_details_text, text);
 		  EnableWindow(update_book_btn, true);
+		  EnableWindow(delete_book_btn, true);
 	       } else if(info->uNewState == 0 && info->uOldState == 2) {
 		  SetWindowText(book_details_text, "");
 		  EnableWindow(update_book_btn, false);
+		  EnableWindow(delete_book_btn, false);
 	       }
 	    }break;  
 	 }
@@ -685,16 +724,60 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	 return(LRESULT)GetSysColorBrush(COLOR_WINDOW);
       }break;
 
-      case PM_UPDATEENTRY: {
-	 s32 book_index = ListView_GetNextItem(book_listview, -1, LVNI_SELECTED);	//returns -1 for failure!
-	 Book *book = book_list[book_index];
-	 update_entry(book, (u32)lParam);
+      case EL_OPERATION: {
+	 switch(wParam) {
+	    case 0: {	//::UPDATE::
+	       s32 book_index = ListView_GetNextItem(book_listview, -1, LVNI_SELECTED);	//returns -1 for failure!
+	       Book *book = book_list[book_index];
+	       update_entry(book, (u32)lParam);
 
-	 char text[2046], page_buffer[512];
-	 get_pages_read(book, page_buffer, 512);
-	 snprintf(text, 2046, "%s\n%s\n%d\n%s\n", book->name, book->author, book->page_total, page_buffer);
-	 SetWindowText(book_details_text, text);
-	 save_to_file(book_list, book_count);
+	       char text[2046], page_buffer[512];
+	       get_pages_read(book, page_buffer, 512);
+	       snprintf(text, 2046, "%s\n%s\n%d\n%s\n", book->name, book->author, book->page_total, page_buffer);
+	       SetWindowText(book_details_text, text);
+	       save_to_file(book_list, book_count);
+	    }break;
+	       
+	    case 1: {	//::CREATE::
+	       if (book_count+1 < MAX_BOOK_COUNT) {
+		  Book *new_book = (Book*)lParam;
+		  LVITEM item;
+		  item.mask = LVIF_TEXT;
+		  item.iItem = book_count;
+		  item.iSubItem = 0;
+		  item.pszText = new_book->name;
+		  ListView_InsertItem(book_listview, &item);
+
+		  item.iSubItem = 1;
+		  item.pszText = new_book->author;
+		  ListView_SetItem(book_listview, &item);
+
+		  char tmp[8];
+		  snprintf(tmp, 8, "%d", new_book->page_total);
+		  item.iSubItem = 2;
+		  item.pszText = tmp;
+		  ListView_SetItem(book_listview, &item);
+		  		   
+		  book_list[book_count++] = new_book;
+		  save_to_file(book_list, book_count);
+	       } else {
+		  MessageBox(NULL, "Maximum book count reached! You can not create more book!", "ERROR", MB_ICONERROR);
+	       }
+	    }break;
+
+	    case 2: {	//::DELETE::
+	       s32 book_index = ListView_GetNextItem(book_listview, -1, LVNI_SELECTED);	//returns -1 for failure!
+	       u8 result = MessageBox(hwnd,"Are you sure you want to delete this entry?", "WARNING",MB_OKCANCEL|MB_ICONWARNING|MB_DEFBUTTON2);
+	       if (result == IDOK) {
+		  ListView_DeleteItem(book_listview, book_index);
+		  HeapFree(GetProcessHeap(), NULL, book_list[book_index]);
+		  for (u32 i = book_index; i < book_count-1; ++i)
+		     book_list[i] = book_list[i+1];
+		  --book_count;
+		  save_to_file(book_list, book_count);
+	       }
+	    }
+	 }
       }break;
 
       case WM_SYSCOLORCHANGE :
@@ -711,7 +794,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
    }
    return (result);
 }
-BOOL CALLBACK DialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
+
+BOOL CALLBACK UpdateDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
    switch(msg) {
       case WM_COMMAND:
@@ -734,7 +818,7 @@ BOOL CALLBACK DialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	       from = to;
 	       to = tmp;
 	    }
-	    SendMessage(GetParent(hwnd),PM_UPDATEENTRY, NULL, (LPARAM)MAKELONG(from, to));
+	    SendMessage(GetParent(hwnd),EL_OPERATION, NULL, (LPARAM)MAKELONG(from, to));
 	    EndDialog(hwnd, 1);
 	    return true;
 	 } else if (LOWORD(wParam) == IDDB_CANCEL) {
@@ -760,8 +844,11 @@ LRESULT CALLBACK DetailsBoxProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 
       case WM_COMMAND: {
 	 switch(LOWORD(wParam)) {
-	    case IDB_UPDATE:
-	       DialogBox(NULL, MAKEINTRESOURCE(IDD_UPDATE), GetParent(hwnd), DialogProc);
+	    case IDD_UPDATE:
+	       DialogBox(NULL, MAKEINTRESOURCE(IDD_UPDATE), GetParent(hwnd), UpdateDialogProc);
+	       break;
+	    case IDB_DELETE:
+	       SendMessage(GetParent(hwnd), EL_OPERATION, 2, NULL);
 	       break;
 	 }
       }break;
@@ -777,7 +864,7 @@ int WINAPI WinMain(HINSTANCE main_instance, HINSTANCE JuNk_prev_instance, LPSTR 
    main_class.style = CS_HREDRAW | CS_VREDRAW;
    main_class.lpfnWndProc = WindowProc;
    main_class.hInstance = main_instance;
-   main_class.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+   main_class.hIcon = LoadIcon(NULL, MAKEINTRESOURCE(IDI_ICON1));
    main_class.hCursor = LoadCursor(NULL, IDC_ARROW);
    main_class.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
    main_class.lpszMenuName = APP_NAME;
